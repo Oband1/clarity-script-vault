@@ -1,10 +1,11 @@
 ;; ScriptVault - Secure storage for scripts and intellectual property
 
-;; Constants
+;; Constants 
 (define-constant contract-owner tx-sender)
 (define-constant err-not-found (err u404))
 (define-constant err-unauthorized (err u401))
 (define-constant err-already-exists (err u409))
+(define-constant err-invalid-version (err u400))
 
 ;; Data structures
 (define-map scripts 
@@ -14,7 +15,16 @@
         hash: (buff 32),
         title: (string-utf8 256),
         timestamp: uint,
-        description: (string-utf8 1024)
+        description: (string-utf8 1024),
+        current-version: uint
+    })
+
+(define-map script-versions
+    { script-id: uint, version: uint }
+    {
+        hash: (buff 32),
+        changelog: (string-utf8 1024),
+        timestamp: uint
     })
 
 (define-map access-rights
@@ -51,16 +61,42 @@
                     hash: hash,
                     title: title,
                     timestamp: block-height,
-                    description: description
+                    description: description,
+                    current-version: u1
+                }
+            )
+            (map-set script-versions
+                {script-id: new-id, version: u1}
+                {
+                    hash: hash,
+                    changelog: "Initial version",
+                    timestamp: block-height
                 }
             )
             (var-set last-script-id new-id)
             (add-history new-id "REGISTER" tx-sender)
             (ok new-id))))
 
+(define-public (update-script (script-id uint) (new-hash (buff 32)) (changelog (string-utf8 1024)))
+    (let ((script (unwrap! (map-get? scripts {script-id: script-id}) err-not-found))
+          (new-version (+ (get current-version script) u1)))
+        (begin
+            (asserts! (is-owner script-id) err-unauthorized)
+            (map-set script-versions
+                {script-id: script-id, version: new-version}
+                {
+                    hash: new-hash,
+                    changelog: changelog,
+                    timestamp: block-height
+                }
+            )
+            (try! (modify-script script-id {hash: new-hash, current-version: new-version}))
+            (add-history script-id "UPDATE" tx-sender)
+            (ok new-version))))
+
 (define-public (grant-access (script-id uint) (user principal))
     (begin
-        (asserts! (is-owner script-id) err-unauthorized)
+        (asserts! (is-owner script-id) err-unauthorized)  
         (map-set access-rights
             {script-id: script-id, user: user}
             {can-access: true}
@@ -72,7 +108,7 @@
     (begin
         (asserts! (is-owner script-id) err-unauthorized)
         (map-delete access-rights {script-id: script-id, user: user})
-        (add-history script-id "REVOKE_ACCESS" user)
+        (add-history script-id "REVOKE_ACCESS" user) 
         (ok true)))
 
 (define-public (transfer-ownership (script-id uint) (new-owner principal))
@@ -85,6 +121,9 @@
 ;; Read only functions
 (define-read-only (get-script (script-id uint))
     (map-get? scripts {script-id: script-id}))
+
+(define-read-only (get-script-version (script-id uint) (version uint))
+    (map-get? script-versions {script-id: script-id, version: version}))
 
 (define-read-only (can-access (script-id uint) (user principal))
     (let ((access (map-get? access-rights {script-id: script-id, user: user})))

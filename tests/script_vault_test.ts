@@ -28,6 +28,47 @@ Clarinet.test({
         const scriptData = getScript.result.expectSome().expectTuple();
         assertEquals(scriptData['owner'], deployer.address);
         assertEquals(scriptData['title'], "Test Script");
+        assertEquals(scriptData['current-version'], types.uint(1));
+    }
+});
+
+Clarinet.test({
+    name: "Can update script version with changelog",
+    async fn(chain: Chain, accounts: Map<string, Account>) {
+        const deployer = accounts.get('deployer')!;
+        const hash1 = '0x1234567890123456789012345678901234567890123456789012345678901234';
+        const hash2 = '0x2234567890123456789012345678901234567890123456789012345678901234';
+        
+        // Register script
+        let block = chain.mineBlock([
+            Tx.contractCall('script-vault', 'register-script', [
+                types.utf8("Test Script"),
+                types.buff(hash1),
+                types.utf8("Test Description")
+            ], deployer.address)
+        ]);
+        
+        // Update script
+        block = chain.mineBlock([
+            Tx.contractCall('script-vault', 'update-script', [
+                types.uint(1),
+                types.buff(hash2),
+                types.utf8("Added new features")
+            ], deployer.address)
+        ]);
+        
+        block.receipts[0].result.expectOk().expectUint(2);
+        
+        // Verify new version
+        let getVersion = chain.callReadOnlyFn(
+            'script-vault',
+            'get-script-version',
+            [types.uint(1), types.uint(2)],
+            deployer.address
+        );
+        
+        const versionData = getVersion.result.expectSome().expectTuple();
+        assertEquals(versionData['changelog'], "Added new features");
     }
 });
 
